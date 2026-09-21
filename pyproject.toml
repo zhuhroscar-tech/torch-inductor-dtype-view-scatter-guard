@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torch-inductor-dtype-view-scatter-guard"
+version = "0.1.0"
+description = "Guards a real torch.compile (Inductor) correctness bug: a dtype-view + custom-op + diagonal_scatter call pattern produces WRONG VALUES (NaN) and changes the compiled function's return-value aliasing contract compared to eager mode (pytorch/pytorch#197408), because fix_auto_functionalized_dtype_views removes a still-needed clone once a float32 view shares storage with an int32 graph input"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.9"
+authors = [{ name = "zhuhroscar-tech" }]
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "Operating System :: POSIX :: Linux",
+    "Operating System :: MacOS",
+    "License :: OSI Approved :: MIT License",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+dependencies = []
+
+[project.optional-dependencies]
+dev = ["pytest", "pytest-cov"]
+torch = ["torch>=2.0"]
+
+[project.urls]
+Homepage = "https://github.com/zhuhroscar-tech/torch-inductor-dtype-view-scatter-guard"
+
+[project.scripts]
+torch-inductor-dtype-view-scatter-guard = "torch_inductor_dtype_view_scatter_guard.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
