@@ -9,6 +9,8 @@ returns success.
 """
 from __future__ import annotations
 
+from typing import Any, Dict
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -160,3 +162,63 @@ def test_torch_unavailable_error_is_distinct_type():
     subclass, independent of whether torch is actually installed in
     this env."""
     assert issubclass(TorchUnavailableError, RuntimeError)
+
+
+def test_guard_fast_path_returns_compiled_result_identity_when_agreeing():
+    """Directly force the wrapper's 'not divergence' fast path
+    (core.py lines 159-161: `cache.copy_(cache_for_compiled); return
+    compiled_out`) using two hand-written mock callables that are
+    guaranteed to agree, independent of whether torch.compile's real
+    #197408 bug happens to reproduce for a given shape on this host.
+
+    Coverage evidence (pytest --cov) showed those exact two lines
+    NEVER executed by any test in this file: every existing case uses
+    the real Inductor-compiled fn as compiled_fn, and on this host's
+    torch build the #197408 bug reproduces for every tested shape, so
+    every existing test always takes the slow eager-fallback branch.
+    The fast path -- the ONLY path a caller hits once upstream fixes
+    the bug -- has therefore never been verified to do the right
+    thing. This test closes that gap by bypassing torch.compile
+    entirely and constructing compiled_fn/eager_fn that provably
+    agree on both values and aliasing, so divergence is False by
+    construction.
+
+    The assertion distinguishes the fast path from the slow path by
+    object identity, not just value equality: the fast path returns
+    compiled_fn's own output object directly, while the slow path
+    (core.py line 164) always returns `eager_out.clone()` -- a
+    different object. If a future edit accidentally always takes the
+    slow path (e.g. an inverted `if not divergence`), this test fails
+    even though the *values* would still look correct.
+    """
+    captured: Dict[str, Any] = {}
+
+    def compiled_like(cache, data, diag):
+        out = cache.clone().float()
+        out.diagonal().copy_(diag)
+        cache.copy_(out.to(torch.int32))
+        captured["compiled_out"] = out
+        return out
+
+    def eager_like(cache, data, diag):
+        out = cache.clone().float()
+        out.diagonal().copy_(diag)
+        cache.copy_(out.to(torch.int32))
+        return out
+
+    wrapped = safe_compiled_dtype_view_diagonal_scatter(compiled_like, eager_like)
+
+    cache = torch.zeros((2, 2), dtype=torch.int32)
+    data = torch.tensor([[1.0, 2.0], [3.0, 4.0]])
+    diag = torch.tensor([9.0, 9.0])
+
+    result = wrapped(cache, data, diag)
+
+    assert result is captured["compiled_out"], (
+        "expected the fast (not-divergent) path to return "
+        "compiled_fn's own output object directly, not a clone -- "
+        "if this fails, the wrapper is taking the slow eager-"
+        "fallback branch even when compiled and eager fully agree"
+    )
+    assert torch.equal(torch.diagonal(result), diag)
+    assert torch.equal(cache, captured["compiled_out"].to(torch.int32))
